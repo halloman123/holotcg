@@ -11,7 +11,8 @@ No build step, no backend, no accounts. Plain ES modules + IndexedDB + a service
 | Collection tracking (per print) | done |
 | Offline / installable | done |
 | Deck builder | done |
-| Camera scanning | next |
+| Camera scanning | done |
+| Collection export / backup | next |
 
 ## Running it
 
@@ -72,9 +73,15 @@ css/app.css             all styling
 js/db.js                IndexedDB wrapper
 js/data.js              fetch, normalise, index, filter, collection stats
 js/sets.js              set/product names, browse order
+js/scanhash.js          the image fingerprint — shared by the app and the indexer
+js/scan.js              camera, index loading, nearest-neighbour matching
+js/update.js            "a new version is live" detection
 js/deck.js              deck model, legality rules, holoDelta import/export
 js/app.js               views, sheets, interaction
 icons/                  app icons — icon.svg is the source, the PNGs are generated
+data/scan-index.bin     4,968 fingerprints, 1.2 MB
+data/scan-index.json    ids and metadata for the above
+tools/                  index builder and accuracy test (dev only, not shipped)
 ```
 
 ## Deck rules
@@ -141,3 +148,78 @@ to that set.
 
 Unknown codes fall back to the bare code, so a new set that ships before this file is updated still
 works — it just shows as `hBP10` until a row is added.
+
+## Card scanning
+
+Point the camera at a card, line it up with the guide, tap **Scan card**. Everything runs on the
+phone — no image is uploaded anywhere. There is also a **Use a photo** button, which centre-crops
+the picture to card shape; handy on a desktop, and the only option if the camera is blocked.
+
+### How it works
+
+`js/scanhash.js` reduces any card image to a 256-byte fingerprint:
+
+| Bytes | Component | Why |
+|---|---|---|
+| 32 | 16×16 horizontal gradient | layout and art structure; differential, so exposure doesn't move it |
+| 32 | 16×16 vertical gradient | the other half of the structure |
+| 48 | 6×8 luma grid, contrast-stretched | coarse tone, tolerant of small framing errors |
+| 144 | 6×8 grid of grey-world-normalised RGB | the strongest signal; normalisation cancels white balance |
+
+`tools/build-scan-index.mjs` fingerprints every official scan — Japanese, plus English where it
+exists, skipping proxies since nobody owns one — into `data/scan-index.*`. The indexer runs the
+hashing **inside a real browser using the very same module the app uses**, so the index and the
+phone can't drift apart. Matching is a linear scan of all 4,968 entries and takes about 7 ms.
+
+The index is fetched once (1.2 MB) and kept in IndexedDB, so scanning works offline.
+
+### Accuracy
+
+`node tools/test-scan-accuracy.mjs 250 --sweep` degrades random official scans the way a hand-held
+phone does — crop jitter, rotation, shear, exposure and white-balance shift, sensor noise, blur,
+downscale — and looks up each one:
+
+- **98.8%** right card
+- **74.8%** right card *and* right print
+- **99.6%** in the top 5
+
+The gap between those first two numbers is the whole reason the result sheet is shaped the way it
+is: parallel rarities of one card share their artwork, so the scanner names the card confidently
+and then asks you which print you're holding. The `--sweep` flag re-tunes the component weights;
+weights are applied at match time, so changing them does **not** require rebuilding the index.
+
+### Rebuilding
+
+```bash
+npm i playwright
+node tools/build-scan-index.mjs      # ~4 minutes, writes data/scan-index.*
+node tools/test-scan-accuracy.mjs    # sanity-check before committing
+```
+
+Rebuild when new sets are released. The Scan tab compares the index's card count against the live
+card data and tells you how many cards it is missing, so you'll notice.
+
+## Update prompt
+
+When a new version is published, the app shows a modal offering to reload. **Nothing about the
+deploy needs to change for this to work** — there is no version file to stamp and no workflow step
+to add.
+
+Two independent triggers:
+
+1. **Content hash.** The app fetches its own files (`index.html`, `sw.js`, the manifest, the CSS
+   and every JS module — about 30 KB gzipped) with `cache: 'no-store'`, hashes the bytes, and
+   compares that with the hash taken when the session started. Any real change fires; a rebuild
+   that produces identical bytes does not, so there are no phantom prompts. If the fetch fails
+   the result is "unknown", never "changed", so being offline never prompts.
+2. **Service worker.** A new `sw.js` now parks in `waiting` instead of calling `skipWaiting()`
+   during install, so it cannot swap the code out from under you mid-scan. The page notices the
+   waiting worker and prompts immediately; pressing **Reload** posts `SKIP_WAITING`, waits for
+   `controllerchange`, then reloads.
+
+Checks run when the app becomes visible again (at most once every 15 minutes), when the network
+comes back, and once a minute after launch. **Later** silences that particular build for an hour;
+a newer build than the one you dismissed still prompts.
+
+Rebuilding the scan index alone does not trigger the prompt — `data/scan-index.*` is deliberately
+outside the watched set, since it is 1.2 MB. The Scan tab reports index staleness on its own.

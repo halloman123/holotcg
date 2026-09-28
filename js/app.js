@@ -1,5 +1,7 @@
 import * as D from './data.js';
 import * as DK from './deck.js';
+import * as SCAN from './scan.js';
+import * as UPDATE from './update.js';
 import * as db from './db.js';
 
 const $ = s => document.querySelector(s);
@@ -36,13 +38,14 @@ const deckOf = id => ui.decks.find(d => d.id === id);
     boot.classList.add('is-done');
     setTimeout(() => boot.remove(), 600);
   }, 200);
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  UPDATE.start(showUpdateModal);
 })();
 
 // ---------------------------------------------------------------- wiring
 function wire() {
   document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('is-active', x === b));
+    if (ui.view === 'scan' && b.dataset.view !== 'scan') stopScan();
     if (b.dataset.view !== 'decks' || (ui.view === 'decks' && ui.deckId)) ui.deckId = null;
     ui.view = b.dataset.view;
     ui.page = 0;
@@ -89,7 +92,7 @@ function render() {
   if (ui.view === 'cards') renderCards(v);
   else if (ui.view === 'collection') renderCollection(v);
   else if (ui.view === 'decks') { const d = deckOf(ui.deckId); d ? renderDeckEditor(v, d) : renderDeckList(v); }
-  else renderStub(v, 'Scan', 'Camera scanning comes last. The dataset ships perceptual hashes for every illustration, so matching can run fully on-device — no upload.');
+  else renderScan(v);
   renderQuickbar();
 }
 
@@ -215,13 +218,6 @@ async function addFromPicker(v) {
   toast((pile === 'oshi' ? 'Oshi: ' : '+ ') + D.t(v.card.name) + (pile === 'oshi' ? '' : ' (' + inDeck + ')'));
 }
 
-function renderStub(root, title, body) {
-  const w = el('div', 'view__empty');
-  w.appendChild(el('h2', null, title));
-  w.appendChild(el('p', null, body));
-  root.appendChild(w);
-}
-
 function renderCollection(root) {
   const s = D.collectionStats();
   const stats = el('div', 'stats');
@@ -262,6 +258,211 @@ function renderCollection(root) {
   root.appendChild(list);
 }
 
+
+
+// ---------------------------------------------------------------- scan
+let scanStream = null;
+let scanBusy = false;
+
+function stopScan() {
+  SCAN.stopCamera(scanStream);
+  scanStream = null;
+}
+
+function renderScan(root) {
+  const wrap = el('div', 'scan');
+
+  const stage = el('div', 'scan__stage');
+  const video = document.createElement('video');
+  video.className = 'scan__video';
+  video.playsInline = true;
+  video.muted = true;
+  stage.appendChild(video);
+  const guide = el('div', 'scan__guide');
+  guide.appendChild(el('div', 'scan__guidebox'));
+  stage.appendChild(guide);
+  const hint = el('p', 'scan__hint', 'Fill the frame with one card, straight on, in even light.');
+  stage.appendChild(hint);
+  wrap.appendChild(stage);
+
+  const bar = el('div', 'scan__bar');
+  const shutter = el('button', 'btn btn--primary', 'Start camera');
+  shutter.type = 'button';
+  const pick = el('button', 'btn', 'Use a photo');
+  pick.type = 'button';
+  const file = document.createElement('input');
+  file.type = 'file';
+  file.accept = 'image/*';
+  file.hidden = true;
+  pick.addEventListener('click', () => file.click());
+  bar.append(shutter, pick, file);
+  wrap.appendChild(bar);
+
+  const status = el('p', 'scan__status', '');
+  wrap.appendChild(status);
+  root.appendChild(wrap);
+
+  const setStatus = (msg, kind) => {
+    status.textContent = msg || '';
+    status.className = 'scan__status' + (kind ? ' is-' + kind : '');
+  };
+
+  SCAN.loadIndex(m => setStatus(m)).then(ix => {
+    const behind = D.state.cards.length - (ix.cards || 0);
+    setStatus(ix.count.toLocaleString() + ' card images indexed · matching runs on this device'
+      + (behind > 0 ? ' · ' + behind + ' newer cards are not in the index yet' : ''));
+  }).catch(err => setStatus(err.message, 'err'));
+
+  shutter.addEventListener('click', async () => {
+    if (!scanStream) {
+      try {
+        setStatus('Starting camera…');
+        scanStream = await SCAN.startCamera(video);
+        stage.classList.add('is-live');
+        shutter.textContent = 'Scan card';
+        setStatus('');
+      } catch (err) {
+        setStatus(cameraError(err), 'err');
+      }
+      return;
+    }
+    if (scanBusy) return;
+    scanBusy = true;
+    try {
+      const view = video.getBoundingClientRect();
+      const box = guide.querySelector('.scan__guidebox').getBoundingClientRect();
+      const rect = SCAN.guideToSource(video, view, box);
+      if (!rect) { setStatus('Camera not ready yet', 'err'); return; }
+      await showMatches(SCAN.scanFrame(video, rect), setStatus);
+    } finally { scanBusy = false; }
+  });
+
+  file.addEventListener('change', async () => {
+    const f = file.files && file.files[0];
+    if (!f) return;
+    setStatus('Reading photo…');
+    try {
+      const bmp = await createImageBitmap(f);
+      const fp = SCAN.scanFrame(bmp, SCAN.centreCrop(bmp));
+      bmp.close();
+      await showMatches(fp, setStatus);
+    } catch {
+      setStatus('Could not read that image', 'err');
+    }
+    file.value = '';
+  });
+}
+
+function cameraError(err) {
+  const n = err && err.name;
+  if (n === 'NotAllowedError') return 'Camera access was blocked. Allow it for this site, then try again.';
+  if (n === 'NotFoundError') return 'No camera on this device — use a photo instead.';
+  if (n === 'NotReadableError') return 'The camera is in use by another app.';
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost') return 'The camera needs HTTPS.';
+  return 'Camera failed: ' + (err && err.message || 'unknown error');
+}
+
+async function showMatches(fp, setStatus) {
+  try { await SCAN.loadIndex(); } catch (err) { return setStatus(err.message, 'err'); }
+  const cards = SCAN.matchCards(fp, 4);
+  if (!cards.length) return setStatus('No match found', 'err');
+  setStatus('');
+
+  openSheet(panel => {
+    const top = cards[0];
+    panel.appendChild(el('h2', 'sheet__title', D.t(top.card.name)));
+    panel.appendChild(el('p', 'sheet__sub', top.card.card_number + ' · ' + D.setName(top.card._set, D.state.lang)));
+    panel.appendChild(el('p', 'verdict verdict--' + top.confidence,
+      top.confidence === 'certain' ? 'Confident match'
+      : top.confidence === 'likely' ? 'Probably this card'
+      : top.confidence === 'maybe' ? 'Uncertain — check the alternatives below'
+      : 'Weak match — try again with better light'));
+
+    panel.appendChild(el('h3', 'sheet__h', 'Which print?'));
+    panel.appendChild(el('p', 'fgroup__note', 'Parallel rarities share the same art, so pick the one in your hand.'));
+    for (const p of top.prints) renderScanPrint(panel, p);
+
+    if (cards.length > 1) {
+      panel.appendChild(el('h3', 'sheet__h', 'Or was it one of these?'));
+      for (const c of cards.slice(1)) {
+        const row = el('button', 'altcard');
+        row.type = 'button';
+        const img = el('img', 'art__img');
+        img.loading = 'lazy';
+        img.src = D.imgUrl(c.prints[0].variant.ill);
+        img.alt = '';
+        row.appendChild(img);
+        const m = el('div', 'art__main');
+        m.appendChild(el('div', 'art__name', D.t(c.card.name)));
+        m.appendChild(el('div', 'art__by', c.card.card_number + ' · ' + D.setName(c.card._set, D.state.lang)));
+        row.appendChild(m);
+        row.appendChild(meterEl(c.dist, c.confidence));
+        row.addEventListener('click', () => { closeSheet(); openCard(c.card, c.prints[0].variant.id); });
+        panel.appendChild(row);
+      }
+    }
+
+    const foot = el('div', 'sheet__foot');
+    const again = el('button', 'btn btn--primary', 'Scan another');
+    again.type = 'button';
+    again.addEventListener('click', closeSheet);
+    foot.appendChild(again);
+    panel.appendChild(foot);
+  });
+}
+
+function meterEl(dist, conf) {
+  const meter = el('div', 'meter');
+  const fill = document.createElement('i');
+  fill.style.width = Math.max(3, Math.round((1 - dist / 0.4) * 100)) + '%';
+  fill.className = 'is-' + conf;
+  meter.appendChild(fill);
+  meter.title = 'distance ' + dist.toFixed(3);
+  return meter;
+}
+
+function renderScanPrint(panel, p) {
+  const v = p.variant;
+  const row = el('div', 'art');
+  const thumb = el('img', 'art__img');
+  thumb.loading = 'lazy';
+  thumb.src = D.imgUrl(v.ill);
+  thumb.alt = '';
+  thumb.addEventListener('click', () => { closeSheet(); openCard(v.card, v.id); });
+  row.appendChild(thumb);
+
+  const main = el('div', 'art__main');
+  main.appendChild(el('div', 'art__name', v.rarity + (v.illustrator ? ' · ' + v.illustrator : '')));
+  main.appendChild(el('div', 'art__by', 'you own ' + D.qty(v.id)));
+  main.appendChild(meterEl(p.dist, p.confidence));
+  row.appendChild(main);
+
+  const acts = el('div', 'scanacts');
+  const own = el('button', 'chip', '+1 owned');
+  own.type = 'button';
+  own.addEventListener('click', async () => {
+    const n = await D.setQty(v.id, D.qty(v.id) + 1);
+    own.textContent = '✓ ' + n;
+    own.classList.add('is-on');
+    main.querySelector('.art__by').textContent = 'you own ' + n;
+  });
+  acts.appendChild(own);
+  const deck = deckOf(ui.picker || ui.deckId);
+  if (deck) {
+    const add = el('button', 'chip', '+ deck');
+    add.type = 'button';
+    add.addEventListener('click', async () => {
+      const err = DK.change(deck, v.id, 1);
+      if (err) return toast(err);
+      await DK.save(deck);
+      add.textContent = '✓ added';
+      add.classList.add('is-on');
+    });
+    acts.appendChild(add);
+  }
+  row.appendChild(acts);
+  panel.appendChild(row);
+}
 
 // ---------------------------------------------------------------- decks
 function renderDeckList(root) {
@@ -746,6 +947,51 @@ function group(panel, title, values, set, label) {
   }
   g.appendChild(row);
   panel.appendChild(g);
+}
+
+// ---------------------------------------------------------------- update prompt
+let updateShowing = false;
+
+function showUpdateModal(build) {
+  if (updateShowing) return;
+  updateShowing = true;
+
+  const wrap = el('div', 'modal');
+  const scrim = el('div', 'modal__scrim');
+  wrap.appendChild(scrim);
+
+  const box = el('div', 'modal__box');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-labelledby', 'update-title');
+  const h = el('h2', 'modal__title', 'Update available');
+  h.id = 'update-title';
+  box.appendChild(h);
+  box.appendChild(el('p', 'modal__body',
+    'A newer version of holoTCG has been published. Your collection and decks are stored on this device, so reloading will not touch them.'));
+  box.appendChild(el('p', 'modal__meta', 'build ' + build));
+
+  const acts = el('div', 'modal__acts');
+  const later = el('button', 'btn', 'Later');
+  later.type = 'button';
+  const now = el('button', 'btn btn--primary', 'Reload');
+  now.type = 'button';
+  acts.append(later, now);
+  box.appendChild(acts);
+  wrap.appendChild(box);
+  document.body.appendChild(wrap);
+
+  const close = () => { wrap.remove(); updateShowing = false; document.removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') { UPDATE.snooze(build); close(); } };
+  document.addEventListener('keydown', onKey);
+  later.addEventListener('click', () => { UPDATE.snooze(build); close(); });
+  scrim.addEventListener('click', () => { UPDATE.snooze(build); close(); });
+  now.addEventListener('click', async () => {
+    now.disabled = true;
+    now.textContent = 'Reloading…';
+    await UPDATE.apply();
+  });
+  now.focus();
 }
 
 // ---------------------------------------------------------------- helpers
