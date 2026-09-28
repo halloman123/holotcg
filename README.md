@@ -71,6 +71,7 @@ sw.js                   service worker (shell precache + image cache)
 css/app.css             all styling
 js/db.js                IndexedDB wrapper
 js/data.js              fetch, normalise, index, filter, collection stats
+js/sets.js              set/product names, browse order
 js/deck.js              deck model, legality rules, holoDelta import/export
 js/app.js               views, sheets, interaction
 icons/                  app icons — icon.svg is the source, the PNGs are generated
@@ -120,3 +121,23 @@ iOS composites transparency onto black and applies its own mask.
 The icon is an original mark — three fanned cards and a cheer star. It deliberately does **not**
 use Cover Corp's hololive logo or any official mark: the app is served publicly, and an official
 logo on a home screen reads as an officially endorsed app.
+
+## Set names
+
+The card dataset only carries set codes (`hBP01`, `hSD14`, …), so `js/sets.js` maps each one to
+its product name:
+
+- English names and release dates from the official
+  [English card list](https://en.hololive-official-cardgame.com/cardlist/) — 18 sets
+- Japanese names from the [Japanese card list](https://hololive-official-cardgame.com/cardlist/)
+- For JP-only Start Decks the English label uses the Oshi's name **as the dataset spells it**
+  (`Start Deck – FLOW GLOW Koganei Niko`), so it matches the card rather than a hand transliteration
+- `hY01`–`hY06` are not products — they're cheer cards numbered by colour, labelled as such
+- `hSD20` / `hSD21` are not announced yet and are tagged `soon`
+
+Sets with no English printing are tagged **JP only**, which is also why their cards show Japanese art
+in the default image mode. Set names are searchable, so typing `blooming` or `diva fever` filters
+to that set.
+
+Unknown codes fall back to the bare code, so a new set that ships before this file is updated still
+works — it just shows as `hBP10` until a row is added.

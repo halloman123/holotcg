@@ -1,5 +1,8 @@
 // Card data: fetch, normalise, index, search.
 import * as db from './db.js';
+import { SETS, setName, setFullName, compareSets, isJpOnly, isUnreleased, setKind } from './sets.js';
+
+export { SETS, setName, setFullName, compareSets, isJpOnly, isUnreleased, setKind };
 
 export const SRC = 'https://qrimpuff.github.io/hocg-fan-sim-assets';
 export const CARDS_URL = SRC + '/hocg_cards.json';
@@ -53,14 +56,7 @@ export function typeLabel(key) {
   })[key] || key;
 }
 
-const SET_ORDER = ['hBP', 'hSD', 'hEB', 'hY', 'hYS', 'hCO', 'hCS', 'hWF', 'hBD', 'hPR'];
-export function setRank(set) {
-  const i = SET_ORDER.findIndex(p => set.startsWith(p));
-  return i < 0 ? SET_ORDER.length : i;
-}
-function bySet(a, b) {
-  return setRank(a) - setRank(b) || a.localeCompare(b, 'en', { numeric: true });
-}
+const bySet = compareSets;
 
 export function setOf(cardNumber) {
   const i = cardNumber.indexOf('-');
@@ -100,7 +96,8 @@ function normalise(raw) {
     card._nameJp = (c.name && c.name.jp) || '';
     card._tags = (c.tags || []).map(x => x.en || x.jp);
     // one searchable haystack (lowercased)
-    const bits = [num, card._nameEn, card._nameJp, ...card._tags];
+    const bits = [num, card._nameEn, card._nameJp, ...card._tags,
+      setName(card._set, 'en'), setName(card._set, 'jp'), setKind(card._set)];
     for (const a of c.arts || []) {
       if (a.name) bits.push(a.name.en, a.name.jp);
       if (a.text) bits.push(a.text.en, a.text.jp);

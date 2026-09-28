@@ -236,13 +236,22 @@ function renderCollection(root) {
   for (const e of s.perSet) {
     const row = el('button', 'setrow');
     row.type = 'button';
-    row.appendChild(el('span', 'setrow__id', e.set));
+    const top = el('div', 'setrow__top');
+    top.appendChild(el('span', 'setrow__name', D.setName(e.set, D.state.lang)));
+    top.appendChild(el('span', 'setrow__n', e.have + '/' + e.total));
+    row.appendChild(top);
+    const sub = el('div', 'setrow__sub');
+    sub.appendChild(el('span', 'setrow__id', e.set));
+    const kind = D.setKind(e.set);
+    if (kind) sub.appendChild(el('span', null, kind));
+    if (D.isUnreleased(e.set)) sub.appendChild(el('span', 'tagjp', 'unreleased'));
+    else if (D.isJpOnly(e.set)) sub.appendChild(el('span', 'tagjp', 'JP only'));
+    row.appendChild(sub);
     const bar = el('span', 'setrow__bar');
     const i = document.createElement('i');
     i.style.width = (e.total ? e.have / e.total * 100 : 0) + '%';
     bar.appendChild(i);
     row.appendChild(bar);
-    row.appendChild(el('span', 'setrow__n', e.have + '/' + e.total));
     row.addEventListener('click', () => {
       D.clearFilters();
       D.filters.sets.add(e.set);
@@ -420,7 +429,8 @@ function deckRow(d, e, pile) {
   const main = el('div', 'art__main');
   main.appendChild(el('div', 'art__name', D.t(e.v.card.name)));
   const have = D.qty(e.vid);
-  const meta = e.v.card.card_number + ' · ' + e.v.rarity + (have < e.n ? ' · you own ' + have : '');
+  const meta = e.v.card.card_number + ' · ' + e.v.rarity + ' · ' + D.setName(e.v.card._set, D.state.lang) +
+    (have < e.n ? ' · you own ' + have : '');
   const sub = el('div', 'art__by', meta);
   if (have < e.n) sub.classList.add('is-short');
   main.appendChild(sub);
@@ -566,6 +576,7 @@ function openCard(card, focusVariantId) {
     panel.appendChild(el('h2', 'sheet__title', D.t(card.name)));
     panel.appendChild(el('p', 'sheet__sub', card.card_number + ' · ' + D.typeLabel(card._type) +
       (card.bloom_level ? ' · ' + cap(card.bloom_level) : '')));
+    panel.appendChild(el('p', 'sheet__set', D.setFullName(card._set, D.state.lang)));
 
     const focus = card._variants.find(v => v.id === focusVariantId) || card._variants[0];
     const hero = el('div', 'detail__hero');
@@ -679,7 +690,7 @@ function openFilters() {
     disp.appendChild(el('p', 'fgroup__note', 'About a quarter of prints have no English release yet, so the dataset only has a fan-made proxy scan for them \u2014 the ones stamped PROXY. Official scans shows the real card in English where it exists and Japanese where it does not. Card text always follows the EN/JP button in the header.'));
     panel.appendChild(disp);
 
-    group(panel, 'Set', D.state.sets, D.filters.sets, x => x);
+    setGroup(panel);
     group(panel, 'Card type', ['oshi_holomem', 'holomem', 'cheer', 'support_event', 'support_item', 'support_tool', 'support_mascot', 'support_fan', 'support_staff'], D.filters.types, D.typeLabel);
     group(panel, 'Bloom level', D.BLOOMS, D.filters.blooms, cap);
     group(panel, 'Rarity', D.state.rarities, D.filters.rarities, x => x);
@@ -693,6 +704,34 @@ function openFilters() {
     foot.append(clear, done);
     panel.appendChild(foot);
   });
+}
+
+function setGroup(panel) {
+  const byKind = new Map();
+  for (const code of D.state.sets) {
+    const kind = D.setKind(code) || 'Other';
+    if (!byKind.has(kind)) byKind.set(kind, []);
+    byKind.get(kind).push(code);
+  }
+  const order = ['Booster Pack', 'Extra Booster', 'Start Deck', 'Live Start Deck', 'Accessory', 'Promo', 'Cheer', 'Other'];
+  for (const kind of order) {
+    const codes = byKind.get(kind);
+    if (!codes) continue;
+    const g = el('div', 'fgroup');
+    g.appendChild(el('h3', 'fgroup__h', kind));
+    const row = el('div', 'fgroup__row');
+    for (const code of codes) {
+      const b = el('button', 'chip' + (D.filters.sets.has(code) ? ' is-on' : ''), D.setName(code, D.state.lang));
+      b.type = 'button';
+      b.title = code;
+      if (D.isUnreleased(code)) b.appendChild(el('span', 'chip__tag', 'soon'));
+      else if (D.isJpOnly(code)) b.appendChild(el('span', 'chip__tag', 'JP'));
+      b.addEventListener('click', () => { toggle(D.filters.sets, code); b.classList.toggle('is-on', D.filters.sets.has(code)); });
+      row.appendChild(b);
+    }
+    g.appendChild(row);
+    panel.appendChild(g);
+  }
 }
 
 function group(panel, title, values, set, label) {

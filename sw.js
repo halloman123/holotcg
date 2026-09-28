@@ -1,12 +1,12 @@
 // holoTCG service worker — app shell precache + runtime image cache.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL = 'shell-' + VERSION;
 const IMGS  = 'imgs-' + VERSION;
 const DATA  = 'data-' + VERSION;
 
 const SHELL_FILES = [
   './', './index.html', './css/app.css',
-  './js/app.js', './js/data.js', './js/db.js', './js/deck.js',
+  './js/app.js', './js/data.js', './js/db.js', './js/deck.js', './js/sets.js',
   './manifest.webmanifest', './icons/icon.svg',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'
 ];
