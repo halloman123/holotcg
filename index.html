@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e0e11">
+<title>holoTCG — Collection</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<div class="boot" id="boot">
+  <div class="boot__inner">
+    <h1 class="boot__logo">holo<span>TCG</span></h1>
+    <p class="boot__status" id="boot-status">Starting…</p>
+    <div class="boot__bar"><i id="boot-bar"></i></div>
+  </div>
+</div>
+
+<header class="topbar" id="topbar">
+  <div class="topbar__row">
+    <h1 class="topbar__title" id="view-title">Cards</h1>
+    <div class="topbar__actions">
+      <button class="chip chip--lang" id="lang-toggle" type="button" title="Language">EN</button>
+      <button class="chip" id="sync-btn" type="button" title="Refresh card data">↻</button>
+    </div>
+  </div>
+  <div class="topbar__row topbar__row--search" id="search-row">
+    <input class="search" id="search" type="search" placeholder="Search name, number, text…" autocomplete="off" enterkeyhint="search">
+    <button class="chip chip--filter" id="filter-btn" type="button">Filters<span class="chip__count" id="filter-count" hidden>0</span></button>
+  </div>
+  <div class="quickbar" id="quickbar"></div>
+</header>
+
+<main class="view" id="view"></main>
+
+<nav class="tabbar">
+  <button class="tab is-active" data-view="cards" type="button"><span class="tab__ico">▦</span><span>Cards</span></button>
+  <button class="tab" data-view="collection" type="button"><span class="tab__ico">★</span><span>Collection</span></button>
+  <button class="tab" data-view="decks" type="button"><span class="tab__ico">⛁</span><span>Decks</span></button>
+  <button class="tab" data-view="scan" type="button"><span class="tab__ico">◎</span><span>Scan</span></button>
+</nav>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet__scrim" data-close></div>
+  <div class="sheet__panel" id="sheet-panel" role="dialog" aria-modal="true"></div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
