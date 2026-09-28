@@ -1,4 +1,5 @@
 import * as D from './data.js';
+import * as DK from './deck.js';
 import * as db from './db.js';
 
 const $ = s => document.querySelector(s);
@@ -9,7 +10,12 @@ const ui = {
   page: 0,
   pageSize: 60,
   results: [],
+  decks: [],
+  deckId: null,     // open deck in the Decks tab
+  picker: null,     // deck id being filled from the Cards tab
 };
+
+const deckOf = id => ui.decks.find(d => d.id === id);
 
 // ---------------------------------------------------------------- boot
 (async function boot() {
@@ -21,10 +27,15 @@ const ui = {
     prog(err.message + ' — retry when online.', 100);
     return;
   }
+  ui.decks = await DK.all();
   $('#lang-toggle').textContent = D.state.lang.toUpperCase();
   wire();
   render();
-  setTimeout(() => { $('#boot').classList.add('is-done'); }, 200);
+  setTimeout(() => {
+    const boot = $('#boot');
+    boot.classList.add('is-done');
+    setTimeout(() => boot.remove(), 600);
+  }, 200);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
 
@@ -32,6 +43,7 @@ const ui = {
 function wire() {
   document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('is-active', x === b));
+    if (b.dataset.view !== 'decks' || (ui.view === 'decks' && ui.deckId)) ui.deckId = null;
     ui.view = b.dataset.view;
     ui.page = 0;
     window.scrollTo(0, 0);
@@ -69,13 +81,14 @@ function wire() {
 // ---------------------------------------------------------------- render
 function render() {
   const titles = { cards: 'Cards', collection: 'Collection', decks: 'Decks', scan: 'Scan' };
-  $('#view-title').textContent = titles[ui.view];
+  const openDeck = ui.view === 'decks' ? deckOf(ui.deckId) : null;
+  $('#view-title').textContent = openDeck ? openDeck.name : titles[ui.view];
   $('#topbar').classList.toggle('is-plain', ui.view !== 'cards');
   const v = $('#view');
   v.innerHTML = '';
   if (ui.view === 'cards') renderCards(v);
   else if (ui.view === 'collection') renderCollection(v);
-  else if (ui.view === 'decks') renderStub(v, 'Decks', 'Deck builder comes next: Oshi + 50-card main deck + 20 cheer, with live legality checks and an export you can paste into Deck Log.');
+  else if (ui.view === 'decks') { const d = deckOf(ui.deckId); d ? renderDeckEditor(v, d) : renderDeckList(v); }
   else renderStub(v, 'Scan', 'Camera scanning comes last. The dataset ships perceptual hashes for every illustration, so matching can run fully on-device — no upload.');
   renderQuickbar();
 }
@@ -105,6 +118,25 @@ function renderQuickbar() {
 }
 
 function renderCards(root) {
+  if (ui.picker) {
+    const d = deckOf(ui.picker);
+    if (d) {
+      const bar = el('div', 'picker');
+      const txt = el('div', 'picker__txt');
+      const val = DK.validate(d);
+      txt.appendChild(el('strong', null, 'Adding to ' + d.name));
+      txt.appendChild(el('span', null, 'Deck ' + val.main + '/' + DK.MAIN_SIZE + ' · Cheer ' + val.cheer + '/' + DK.CHEER_SIZE + (d.oshi ? ' · Oshi set' : ' · no Oshi')));
+      bar.appendChild(txt);
+      const done = el('button', 'btn btn--primary picker__done', 'Done');
+      done.type = 'button';
+      done.addEventListener('click', () => {
+        ui.deckId = ui.picker; ui.picker = null;
+        document.querySelector('.tab[data-view="decks"]').click();
+      });
+      bar.appendChild(done);
+      root.appendChild(bar);
+    } else ui.picker = null;
+  }
   ui.results = D.queryVariants();
   const note = el('p', 'view__note',
     ui.results.length.toLocaleString() + ' of ' + D.state.variants.length.toLocaleString() + ' prints · ' +
@@ -145,9 +177,42 @@ function tile(v) {
   img.src = D.imgUrl(v.ill);
   a.appendChild(img);
   a.appendChild(el('span', 'card__rar', v.rarity));
-  a.appendChild(el('span', 'card__badge' + (n ? '' : ' card__badge--zero'), n ? '×' + n : '0'));
-  a.addEventListener('click', () => openCard(v.card, v.id));
+  if (ui.picker) {
+    const d = deckOf(ui.picker);
+    const pile = DK.pileOf(v.card);
+    const inDeck = pile === 'oshi' ? (d && d.oshi === v.id ? 1 : 0) : ((d && d[pile][v.id]) || 0);
+    a.appendChild(el('span', 'card__badge' + (inDeck ? ' card__badge--deck' : ' card__badge--zero'), inDeck ? '+' + inDeck : '+'));
+    a.addEventListener('click', () => addFromPicker(v));
+  } else {
+    a.appendChild(el('span', 'card__badge' + (n ? '' : ' card__badge--zero'), n ? '×' + n : '0'));
+    a.addEventListener('click', () => openCard(v.card, v.id));
+  }
   return a;
+}
+
+async function addFromPicker(v) {
+  const d = deckOf(ui.picker);
+  if (!d) return;
+  const pile = DK.pileOf(v.card);
+  const err = DK.change(d, v.id, 1);
+  if (err) return toast(err);
+  await DK.save(d);
+  const inDeck = pile === 'oshi' ? 1 : d[pile][v.id];
+  const tileEl = document.querySelector('.card[data-vid="' + CSS.escape(v.id) + '"]');
+  if (tileEl) {
+    const b = tileEl.querySelector('.card__badge');
+    b.className = 'card__badge card__badge--deck';
+    b.textContent = '+' + inDeck;
+  }
+  if (pile === 'oshi') {
+    document.querySelectorAll('.card__badge--deck').forEach(b => {
+      if (!tileEl || b !== tileEl.querySelector('.card__badge')) { b.className = 'card__badge card__badge--zero'; b.textContent = '+'; }
+    });
+  }
+  const val = DK.validate(d);
+  const sub = document.querySelector('.picker__txt span');
+  if (sub) sub.textContent = 'Deck ' + val.main + '/' + DK.MAIN_SIZE + ' · Cheer ' + val.cheer + '/' + DK.CHEER_SIZE + (d.oshi ? ' · Oshi set' : ' · no Oshi');
+  toast((pile === 'oshi' ? 'Oshi: ' : '+ ') + D.t(v.card.name) + (pile === 'oshi' ? '' : ' (' + inDeck + ')'));
 }
 
 function renderStub(root, title, body) {
@@ -186,6 +251,293 @@ function renderCollection(root) {
     list.appendChild(row);
   }
   root.appendChild(list);
+}
+
+
+// ---------------------------------------------------------------- decks
+function renderDeckList(root) {
+  const head = el('div', 'deckhead');
+  const mk = el('button', 'btn btn--primary', '+ New deck');
+  mk.type = 'button';
+  mk.addEventListener('click', async () => {
+    const d = DK.blank('Deck ' + (ui.decks.length + 1));
+    await DK.save(d);
+    ui.decks.push(d);
+    ui.deckId = d.id;
+    render();
+  });
+  const imp = el('button', 'btn', 'Import');
+  imp.type = 'button';
+  imp.addEventListener('click', openImport);
+  head.append(mk, imp);
+  root.appendChild(head);
+
+  if (!ui.decks.length) {
+    root.appendChild(el('div', 'view__empty', 'No decks yet. A deck is 1 Oshi, exactly 50 main-deck cards and exactly 20 cheer.'));
+    return;
+  }
+
+  const list = el('div', 'decklist');
+  for (const d of [...ui.decks].sort((a, b) => b.updated - a.updated)) {
+    const val = DK.validate(d);
+    const row = el('button', 'deckcard');
+    row.type = 'button';
+    const o = D.state.byVariant.get(d.oshi);
+    const thumb = el('div', 'deckcard__thumb');
+    if (o) { const i = el('img'); i.loading = 'lazy'; i.src = D.imgUrl(o.ill); i.alt = ''; thumb.appendChild(i); }
+    else thumb.appendChild(el('span', 'deckcard__ph', '?'));
+    row.appendChild(thumb);
+    const body = el('div', 'deckcard__body');
+    body.appendChild(el('div', 'deckcard__name', d.name));
+    body.appendChild(el('div', 'deckcard__meta', (o ? D.t(o.card.name) : 'No Oshi') + ' · ' + val.main + '/' + DK.MAIN_SIZE + ' · ' + val.cheer + '/' + DK.CHEER_SIZE));
+    row.appendChild(body);
+    row.appendChild(el('span', 'dotstate ' + (val.legal ? 'is-ok' : 'is-bad'), val.legal ? '✓' : String(val.errors.length)));
+    row.addEventListener('click', () => { ui.deckId = d.id; window.scrollTo(0, 0); render(); });
+    list.appendChild(row);
+  }
+  root.appendChild(list);
+}
+
+function renderDeckEditor(root, d) {
+  const val = DK.validate(d);
+
+  const back = el('button', 'backlink', '\u2039 All decks');
+  back.type = 'button';
+  back.addEventListener('click', () => { ui.deckId = null; window.scrollTo(0, 0); render(); });
+  root.appendChild(back);
+
+  const bar = el('div', 'deckbar');
+  for (const [label, have, want] of [['Oshi', d.oshi ? 1 : 0, 1], ['Deck', val.main, DK.MAIN_SIZE], ['Cheer', val.cheer, DK.CHEER_SIZE]]) {
+    const c = el('div', 'deckbar__cell' + (have === want ? ' is-ok' : ''));
+    c.appendChild(el('span', 'deckbar__n', have + '/' + want));
+    c.appendChild(el('span', 'deckbar__l', label));
+    bar.appendChild(c);
+  }
+  root.appendChild(bar);
+
+  const acts = el('div', 'deckhead');
+  const add = el('button', 'btn btn--primary', '+ Add cards');
+  add.type = 'button';
+  add.addEventListener('click', () => {
+    ui.picker = d.id;
+    document.querySelector('.tab[data-view="cards"]').click();
+  });
+  const more = el('button', 'btn', '⋯');
+  more.type = 'button';
+  more.addEventListener('click', () => openDeckMenu(d));
+  acts.append(add, more);
+  root.appendChild(acts);
+
+  if (val.errors.length || val.warnings.length) {
+    const box = el('div', 'checks');
+    for (const e of val.errors) box.appendChild(el('div', 'checks__row checks__row--err', '✕ ' + e));
+    for (const w of val.warnings) box.appendChild(el('div', 'checks__row checks__row--warn', '! ' + w));
+    root.appendChild(box);
+  } else {
+    root.appendChild(el('div', 'checks checks--ok', '✓ Legal deck'));
+  }
+
+  // oshi
+  root.appendChild(el('h2', 'sheet__h', 'Oshi holomem'));
+  const o = D.state.byVariant.get(d.oshi);
+  if (o) root.appendChild(deckRow(d, { vid: d.oshi, n: 1, v: o }, 'oshi'));
+  else root.appendChild(el('div', 'view__note', 'Pick one from Add cards — Oshi cards are the ones with a LIFE value.'));
+
+  // main deck grouped
+  const groups = [
+    ['Holomem — Debut', e => e.v.card.bloom_level === 'debut'],
+    ['Holomem — 1st Bloom', e => e.v.card.bloom_level === 'first'],
+    ['Holomem — 2nd Bloom', e => e.v.card.bloom_level === 'second'],
+    ['Holomem — Spot', e => e.v.card.bloom_level === 'spot'],
+    ['Support', e => e.v.card._type.startsWith('support')],
+  ];
+  const mainEntries = DK.entries(d.main);
+  const shown = new Set();
+  root.appendChild(el('h2', 'sheet__h', 'Main deck · ' + val.main + '/' + DK.MAIN_SIZE));
+  for (const [title, test] of groups) {
+    const rows = mainEntries.filter(e => !shown.has(e.vid) && test(e));
+    if (!rows.length) continue;
+    rows.forEach(e => shown.add(e.vid));
+    const n = rows.reduce((a, e) => a + e.n, 0);
+    root.appendChild(el('h3', 'deckgroup', title + ' (' + n + ')'));
+    for (const e of rows) root.appendChild(deckRow(d, e, 'main'));
+  }
+  const rest = mainEntries.filter(e => !shown.has(e.vid));
+  if (rest.length) {
+    root.appendChild(el('h3', 'deckgroup', 'Other (' + rest.reduce((a, e) => a + e.n, 0) + ')'));
+    for (const e of rest) root.appendChild(deckRow(d, e, 'main'));
+  }
+  if (!mainEntries.length) root.appendChild(el('div', 'view__note', 'Empty.'));
+
+  // cheer
+  root.appendChild(el('h2', 'sheet__h', 'Cheer deck · ' + val.cheer + '/' + DK.CHEER_SIZE));
+  const cheerEntries = DK.entries(d.cheer);
+  for (const e of cheerEntries) root.appendChild(deckRow(d, e, 'cheer'));
+  if (!cheerEntries.length) root.appendChild(el('div', 'view__note', 'Empty.'));
+
+  // stats
+  const st = DK.stats(d);
+  if (val.main || val.cheer) {
+    root.appendChild(el('h2', 'sheet__h', 'Mix'));
+    root.appendChild(barRow('Deck colours', st.colors));
+    root.appendChild(barRow('Cheer colours', st.cheerColors));
+  }
+}
+
+function barRow(title, map) {
+  const wrap = el('div', 'mix');
+  wrap.appendChild(el('div', 'mix__h', title));
+  const total = [...map.values()].reduce((a, b) => a + b, 0);
+  if (!total) { wrap.appendChild(el('div', 'view__note', '—')); return wrap; }
+  const bar = el('div', 'mix__bar');
+  for (const [c, n] of [...map].sort((a, b) => b[1] - a[1])) {
+    const seg = el('i');
+    seg.style.width = (n / total * 100) + '%';
+    seg.style.background = colorHex(c);
+    seg.title = c + ' ' + n;
+    bar.appendChild(seg);
+  }
+  wrap.appendChild(bar);
+  const legend = el('div', 'mix__legend');
+  for (const [c, n] of [...map].sort((a, b) => b[1] - a[1])) {
+    const t = el('span', 'mix__tag');
+    const dot = el('i'); dot.style.background = colorHex(c);
+    t.append(dot, document.createTextNode(cap(c) + ' ' + n));
+    legend.appendChild(t);
+  }
+  wrap.appendChild(legend);
+  return wrap;
+}
+
+function deckRow(d, e, pile) {
+  const row = el('div', 'art');
+  const thumb = el('img', 'art__img');
+  thumb.loading = 'lazy';
+  thumb.src = D.imgUrl(e.v.ill);
+  thumb.alt = '';
+  thumb.addEventListener('click', () => openCard(e.v.card, e.vid));
+  row.appendChild(thumb);
+  const main = el('div', 'art__main');
+  main.appendChild(el('div', 'art__name', D.t(e.v.card.name)));
+  const have = D.qty(e.vid);
+  const meta = e.v.card.card_number + ' · ' + e.v.rarity + (have < e.n ? ' · you own ' + have : '');
+  const sub = el('div', 'art__by', meta);
+  if (have < e.n) sub.classList.add('is-short');
+  main.appendChild(sub);
+  row.appendChild(main);
+
+  const box = el('div', 'stepper');
+  const minus = el('button', null, '−'); minus.type = 'button';
+  const out = document.createElement('output');
+  out.textContent = e.n;
+  const plus = el('button', null, '+'); plus.type = 'button';
+  const bump = async delta => {
+    const err = DK.change(d, e.vid, delta);
+    if (err) return toast(err);
+    await DK.save(d);
+    render();
+  };
+  minus.addEventListener('click', () => bump(-1));
+  plus.addEventListener('click', () => bump(1));
+  if (pile === 'oshi') { box.append(minus); } else { box.append(minus, out, plus); }
+  row.appendChild(box);
+  return row;
+}
+
+function openDeckMenu(d) {
+  openSheet(panel => {
+    panel.appendChild(el('h2', 'sheet__title', 'Deck'));
+
+    const nameWrap = el('div', 'fgroup');
+    nameWrap.appendChild(el('h3', 'fgroup__h', 'Name'));
+    const input = el('input', 'search');
+    input.value = d.name;
+    input.addEventListener('change', async () => { d.name = input.value.trim() || 'Untitled deck'; await DK.save(d); render(); });
+    nameWrap.appendChild(input);
+    panel.appendChild(nameWrap);
+
+    panel.appendChild(el('h3', 'sheet__h', 'Export'));
+    const hd = JSON.stringify(DK.toHoloDelta(d));
+    panel.appendChild(exportRow('holoDelta JSON', 'Opens in holoDelta, and in the hOCG Deck Converter for Deck Log, proxy sheets and Tabletop Sim.', hd, d.name + '.holodelta.json'));
+    panel.appendChild(exportRow('Plain text list', 'A readable decklist to paste anywhere.', DK.toText(d), d.name + '.txt'));
+
+    panel.appendChild(el('h3', 'sheet__h', 'Danger zone'));
+    const del = el('button', 'btn btn--danger', 'Delete this deck');
+    del.type = 'button';
+    del.addEventListener('click', async () => {
+      if (del.dataset.armed !== '1') { del.dataset.armed = '1'; del.textContent = 'Tap again to delete'; return; }
+      await DK.remove(d.id);
+      ui.decks = ui.decks.filter(x => x.id !== d.id);
+      ui.deckId = null;
+      closeSheet();
+      render();
+    });
+    panel.appendChild(del);
+  });
+}
+
+function exportRow(title, hint, text, filename) {
+  const box = el('div', 'ability');
+  box.appendChild(el('div', 'ability__name', title));
+  box.appendChild(el('p', 'ability__txt', hint));
+  const row = el('div', 'fgroup__row');
+  const copy = el('button', 'chip', 'Copy');
+  copy.type = 'button';
+  copy.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(text); toast('Copied'); }
+    catch { toast('Clipboard blocked — use Download'); }
+  });
+  const dl = el('button', 'chip', 'Download');
+  dl.type = 'button';
+  dl.addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  });
+  row.append(copy, dl);
+  box.appendChild(row);
+  return box;
+}
+
+function openImport() {
+  openSheet(panel => {
+    panel.appendChild(el('h2', 'sheet__title', 'Import deck'));
+    panel.appendChild(el('p', 'fgroup__note', 'Paste a holoDelta deck (the JSON with deckName, oshi, deck and cheerDeck), or pick the file.'));
+    const ta = document.createElement('textarea');
+    ta.className = 'ta';
+    ta.rows = 6;
+    ta.placeholder = '{"deckName":"…","oshi":["hBP01-001",0],"deck":[["hBP01-009",4,0]],"cheerDeck":[["hY01-001",10,0]]}';
+    panel.appendChild(ta);
+
+    const file = document.createElement('input');
+    file.type = 'file';
+    file.accept = '.json,application/json';
+    file.className = 'filein';
+    file.addEventListener('change', async () => {
+      const f = file.files && file.files[0];
+      if (f) ta.value = await f.text();
+    });
+    panel.appendChild(file);
+
+    const foot = el('div', 'sheet__foot');
+    const go = el('button', 'btn btn--primary', 'Import');
+    go.type = 'button';
+    go.addEventListener('click', async () => {
+      let json;
+      try { json = JSON.parse(ta.value); } catch { return toast('That is not valid JSON'); }
+      const { deck, skipped } = DK.fromHoloDelta(json);
+      await DK.save(deck);
+      ui.decks.push(deck);
+      ui.deckId = deck.id;
+      closeSheet();
+      render();
+      toast(skipped.length ? 'Imported, ' + skipped.length + ' unknown card(s) skipped' : 'Imported');
+    });
+    foot.appendChild(go);
+    panel.appendChild(foot);
+  });
 }
 
 // ---------------------------------------------------------------- sheets
@@ -309,7 +661,24 @@ function syncTile(vid, n) {
 
 function openFilters() {
   openSheet(panel => {
-    panel.appendChild(el('h2', 'sheet__title', 'Filters'));
+    panel.appendChild(el('h2', 'sheet__title', 'Filters & display'));
+
+    const disp = el('div', 'fgroup');
+    disp.appendChild(el('h3', 'fgroup__h', 'Card images'));
+    const drow = el('div', 'fgroup__row');
+    for (const [val, label] of [['auto', 'Official scans'], ['en', 'English + proxies'], ['jp', 'Japanese only']]) {
+      const b = el('button', 'chip' + (D.state.imgMode === val ? ' is-on' : ''), label);
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        D.setImgMode(val);
+        drow.querySelectorAll('.chip').forEach(x => x.classList.toggle('is-on', x === b));
+      });
+      drow.appendChild(b);
+    }
+    disp.appendChild(drow);
+    disp.appendChild(el('p', 'fgroup__note', 'About a quarter of prints have no English release yet, so the dataset only has a fan-made proxy scan for them \u2014 the ones stamped PROXY. Official scans shows the real card in English where it exists and Japanese where it does not. Card text always follows the EN/JP button in the header.'));
+    panel.appendChild(disp);
+
     group(panel, 'Set', D.state.sets, D.filters.sets, x => x);
     group(panel, 'Card type', ['oshi_holomem', 'holomem', 'cheer', 'support_event', 'support_item', 'support_tool', 'support_mascot', 'support_fan', 'support_staff'], D.filters.types, D.typeLabel);
     group(panel, 'Bloom level', D.BLOOMS, D.filters.blooms, cap);

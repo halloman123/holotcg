@@ -11,6 +11,11 @@ export const state = {
   byVariant: new Map(),
   owned: new Map(),     // variantId -> qty
   lang: localStorage.getItem('holotcg.lang') || 'en',
+  // Image source is separate from text language. The dataset has three kinds of
+  // scan: official Japanese (img/), official English (img_en/<set>/EN_*) and
+  // fan-made English proxies (img_en/proxies/*, watermarked PROXY) for cards that
+  // have no English release yet. 'auto' never shows a proxy.
+  imgMode: localStorage.getItem('holotcg.imgmode') || 'auto',   // auto | en | jp
   sets: [],
   rarities: [],
   tags: [],
@@ -48,6 +53,15 @@ export function typeLabel(key) {
   })[key] || key;
 }
 
+const SET_ORDER = ['hBP', 'hSD', 'hEB', 'hY', 'hYS', 'hCO', 'hCS', 'hWF', 'hBD', 'hPR'];
+export function setRank(set) {
+  const i = SET_ORDER.findIndex(p => set.startsWith(p));
+  return i < 0 ? SET_ORDER.length : i;
+}
+function bySet(a, b) {
+  return setRank(a) - setRank(b) || a.localeCompare(b, 'en', { numeric: true });
+}
+
 export function setOf(cardNumber) {
   const i = cardNumber.indexOf('-');
   return i > 0 ? cardNumber.slice(0, i) : cardNumber;
@@ -62,12 +76,18 @@ export function variantId(cardNumber, ill, idx) {
   return cardNumber + '#i' + idx;
 }
 
-export function imgUrl(ill, lang = state.lang, big = true) {
+export function isProxy(ill) {
+  const en = (ill.img_path || {}).en;
+  return !!en && en.startsWith('proxies/');
+}
+
+export function imgUrl(ill) {
   const p = ill.img_path || {};
-  if (lang === 'en' && p.en) return SRC + '/img_en/' + p.en;
-  if (p.jp) return SRC + '/img/' + p.jp;
-  if (p.en) return SRC + '/img_en/' + p.en;
-  return '';
+  const jp = p.jp ? SRC + '/img/' + p.jp : '';
+  const en = p.en ? SRC + '/img_en/' + p.en : '';
+  if (state.imgMode === 'jp') return jp || en;
+  if (state.imgMode === 'en') return en || jp;
+  return (en && !isProxy(ill)) ? en : (jp || en);   // auto: official scans only
 }
 
 function normalise(raw) {
@@ -105,7 +125,7 @@ function normalise(raw) {
     }));
     cards.push(card);
   }
-  cards.sort((a, b) => a.card_number.localeCompare(b.card_number, 'en', { numeric: true }));
+  cards.sort((a, b) => bySet(a._set, b._set) || a.card_number.localeCompare(b.card_number, 'en', { numeric: true }));
   return cards;
 }
 
@@ -125,7 +145,7 @@ function reindex() {
     }
   }
   const rarOrder = ['C', 'U', 'R', 'RR', 'S', 'SR', 'SEC', 'UR', 'HR', 'OSR', 'OUR', 'OC', 'SY', 'P'];
-  state.sets = [...sets].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+  state.sets = [...sets].sort(bySet);
   state.rarities = [...rar].sort((a, b) => rarOrder.indexOf(a) - rarOrder.indexOf(b));
   state.tags = [...tags].sort();
 }
@@ -188,6 +208,11 @@ export function ownedOf(card) {
 export function setLang(l) {
   state.lang = l;
   localStorage.setItem('holotcg.lang', l);
+}
+
+export function setImgMode(m) {
+  state.imgMode = m;
+  localStorage.setItem('holotcg.imgmode', m);
 }
 
 // ---- filtering -------------------------------------------------------------
@@ -257,6 +282,6 @@ export function collectionStats() {
     copies, uniq,
     totalVariants: state.variants.length,
     totalCards: state.cards.length,
-    perSet: [...perSet.values()].sort((a, b) => a.set.localeCompare(b.set, 'en', { numeric: true })),
+    perSet: [...perSet.values()].sort((a, b) => bySet(a.set, b.set)),
   };
 }

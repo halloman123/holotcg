@@ -1,14 +1,14 @@
 // holoTCG service worker — app shell precache + runtime image cache.
-const VERSION = 'v1';
+const VERSION = 'v4';
 const SHELL = 'shell-' + VERSION;
 const IMGS  = 'imgs-' + VERSION;
 const DATA  = 'data-' + VERSION;
 
 const SHELL_FILES = [
   './', './index.html', './css/app.css',
-  './js/app.js', './js/data.js', './js/db.js',
+  './js/app.js', './js/data.js', './js/db.js', './js/deck.js',
   './manifest.webmanifest', './icons/icon.svg',
-  './icons/icon-192.png', './icons/icon-512.png'
+  './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'
 ];
 
 self.addEventListener('install', e => {
@@ -38,9 +38,10 @@ self.addEventListener('fetch', e => {
     e.respondWith(networkFirst(req, DATA));
     return;
   }
-  // own assets: cache-first with background refresh
+  // own assets: network-first, so a redeploy shows up on the next load
+  // and the cached copy only kicks in when offline.
   if (url.origin === self.location.origin) {
-    e.respondWith(cacheFirst(req, SHELL));
+    e.respondWith(networkFirst(req, SHELL));
   }
 });
 
@@ -64,7 +65,7 @@ async function networkFirst(req, cacheName) {
     if (res.ok) cache.put(req, res.clone());
     return res;
   } catch (err) {
-    const hit = await cache.match(req);
+    const hit = await cache.match(req) || await cache.match('./index.html');
     if (hit) return hit;
     throw err;
   }
