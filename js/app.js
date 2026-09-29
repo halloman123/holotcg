@@ -2,6 +2,7 @@ import * as D from './data.js';
 import * as DK from './deck.js';
 import * as SCAN from './scan.js';
 import * as UPDATE from './update.js';
+import * as PRICE from './prices.js';
 import * as db from './db.js';
 
 const $ = s => document.querySelector(s);
@@ -39,6 +40,7 @@ const deckOf = id => ui.decks.find(d => d.id === id);
     setTimeout(() => boot.remove(), 600);
   }, 200);
   UPDATE.start(showUpdateModal);
+  PRICE.load().then(() => { if (ui.view === 'collection') render(); }).catch(() => {});
 })();
 
 // ---------------------------------------------------------------- wiring
@@ -71,6 +73,7 @@ function wire() {
     catch { toast('Refresh failed — offline?'); }
   });
 
+  $('#howto-btn').addEventListener('click', openHowTo);
   $('#filter-btn').addEventListener('click', openFilters);
   $('#sheet').addEventListener('click', e => { if (e.target.dataset.close !== undefined) closeSheet(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
@@ -227,6 +230,8 @@ function renderCollection(root) {
   add(Math.round(s.uniq / s.totalVariants * 100) + '%', 'Of all prints');
   root.appendChild(stats);
 
+  renderValue(root, s);
+
   root.appendChild(el('h2', 'sheet__h', 'Completion by set'));
   const list = el('div', 'setlist');
   for (const e of s.perSet) {
@@ -238,6 +243,8 @@ function renderCollection(root) {
     row.appendChild(top);
     const sub = el('div', 'setrow__sub');
     sub.appendChild(el('span', 'setrow__id', e.set));
+    const sv = setValue(e.set);
+    if (sv != null && sv > 0) sub.appendChild(el('span', 'setrow__val', PRICE.format(sv, PRICE.settings.currency, { whole: true })));
     const kind = D.setKind(e.set);
     if (kind) sub.appendChild(el('span', null, kind));
     if (D.isUnreleased(e.set)) sub.appendChild(el('span', 'tagjp', 'unreleased'));
@@ -464,6 +471,125 @@ function renderScanPrint(panel, p) {
   panel.appendChild(row);
 }
 
+function setValue(set) {
+  if (!PRICE.loaded()) return null;
+  let total = 0;
+  for (const [vid, qty] of D.state.owned) {
+    if (vid.split('-')[0] !== set) continue;
+    const p = PRICE.priceOf(vid);
+    if (p && !p.unconverted) total += p.amount * qty;
+  }
+  return total;
+}
+
+function renderValue(root, stats) {
+  const box = el('section', 'value');
+  root.appendChild(box);
+
+  if (!PRICE.loaded()) {
+    box.appendChild(el('div', 'value__head', 'Collection value'));
+    const note = el('p', 'value__note', 'Loading prices…');
+    box.appendChild(note);
+    PRICE.load()
+      .then(() => render())
+      .catch(err => { note.textContent = err.message; note.classList.add('is-err'); });
+    return;
+  }
+
+  const v = PRICE.collectionValue();
+  const head = el('div', 'value__head');
+  head.appendChild(el('span', null, 'Collection value'));
+  const cfg = el('button', 'value__cfg', PRICE.settings.currency + ' · ' + srcLabel(PRICE.settings.source));
+  cfg.type = 'button';
+  cfg.addEventListener('click', openPriceSettings);
+  head.appendChild(cfg);
+  box.appendChild(head);
+
+  box.appendChild(el('div', 'value__total', PRICE.format(v.total, v.currency, { whole: true })));
+
+  const bits = [];
+  bits.push(v.priced.toLocaleString() + ' of ' + v.copies.toLocaleString() + ' cards priced');
+  if (v.unpriced) bits.push(v.unpriced.toLocaleString() + ' without a price');
+  const at = PRICE.dataDate();
+  if (at) bits.push('as of ' + new Date(at).toLocaleDateString());
+  box.appendChild(el('p', 'value__note', bits.join(' · ')));
+  box.appendChild(el('p', 'value__note', 'Shop listing prices from TCGplayer and Yuyu-tei' +
+    (PRICE.haveRates() ? ', converted at today’s rate' : '') +
+    ' — a guide to replacement cost, not an appraisal.'));
+
+  if (v.top.length) {
+    box.appendChild(el('h3', 'sheet__h', 'Most valuable'));
+    for (const row of v.top.slice(0, 5)) {
+      const r = el('button', 'valrow');
+      r.type = 'button';
+      const img = el('img', 'art__img');
+      img.loading = 'lazy';
+      img.src = D.imgUrl(row.v.ill);
+      img.alt = '';
+      r.appendChild(img);
+      const m = el('div', 'art__main');
+      m.appendChild(el('div', 'art__name', D.t(row.v.card.name)));
+      m.appendChild(el('div', 'art__by', row.v.card.card_number + ' · ' + row.v.rarity +
+        (row.qty > 1 ? ' · ×' + row.qty + ' @ ' + PRICE.format(row.unit) : '')));
+      r.appendChild(m);
+      r.appendChild(el('span', 'valrow__amt', PRICE.format(row.total)));
+      r.addEventListener('click', () => openCard(row.v.card, row.vid));
+      box.appendChild(r);
+    }
+  }
+}
+
+function srcLabel(s) {
+  return s === 'tcg' ? 'TCGplayer' : s === 'yuyu' ? 'Yuyu-tei' : 'Auto';
+}
+
+function openPriceSettings() {
+  openSheet(panel => {
+    panel.appendChild(el('h2', 'sheet__title', 'Prices'));
+
+    const g1 = el('div', 'fgroup');
+    g1.appendChild(el('h3', 'fgroup__h', 'Show values in'));
+    const r1 = el('div', 'fgroup__row');
+    for (const c of Object.keys(PRICE.CURRENCIES)) {
+      const b = el('button', 'chip' + (PRICE.settings.currency === c ? ' is-on' : ''), c);
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        PRICE.setCurrency(c);
+        r1.querySelectorAll('.chip').forEach(x => x.classList.toggle('is-on', x === b));
+      });
+      r1.appendChild(b);
+    }
+    g1.appendChild(r1);
+    if (!PRICE.haveRates()) g1.appendChild(el('p', 'fgroup__note', 'No exchange rate yet — prices stay in their own currency until you are online.'));
+    panel.appendChild(g1);
+
+    const g2 = el('div', 'fgroup');
+    g2.appendChild(el('h3', 'fgroup__h', 'Price source'));
+    const r2 = el('div', 'fgroup__row');
+    for (const [val, label] of [['auto', 'Auto'], ['tcg', 'TCGplayer'], ['yuyu', 'Yuyu-tei']]) {
+      const b = el('button', 'chip' + (PRICE.settings.source === val ? ' is-on' : ''), label);
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        PRICE.setSource(val);
+        r2.querySelectorAll('.chip').forEach(x => x.classList.toggle('is-on', x === b));
+      });
+      r2.appendChild(b);
+    }
+    g2.appendChild(r2);
+    g2.appendChild(el('p', 'fgroup__note',
+      'Auto prefers TCGplayer (US marketplace, dollars) and falls back to Yuyu-tei (Japanese shop, yen). ' +
+      'Yuyu-tei covers more prints; TCGplayer matches the English cards more closely.'));
+    panel.appendChild(g2);
+
+    const foot = el('div', 'sheet__foot');
+    const done = el('button', 'btn btn--primary', 'Done');
+    done.type = 'button';
+    done.addEventListener('click', () => { closeSheet(); render(); });
+    foot.appendChild(done);
+    panel.appendChild(foot);
+  });
+}
+
 // ---------------------------------------------------------------- decks
 function renderDeckList(root) {
   const head = el('div', 'deckhead');
@@ -524,6 +650,15 @@ function renderDeckEditor(root, d) {
     bar.appendChild(c);
   }
   root.appendChild(bar);
+
+  if (PRICE.loaded()) {
+    const dv = PRICE.deckValue(d);
+    if (dv.total > 0) {
+      const line = el('p', 'view__note',
+        'Deck value ' + PRICE.format(dv.total) + (dv.unpriced ? ' · ' + dv.unpriced + ' cards without a price' : ''));
+      root.appendChild(line);
+    }
+  }
 
   const acts = el('div', 'deckhead');
   const add = el('button', 'btn btn--primary', '+ Add cards');
@@ -837,7 +972,10 @@ function openCard(card, focusVariantId) {
       row.appendChild(thumb);
       const main = el('div', 'art__main');
       main.appendChild(el('div', 'art__rar', v.rarity));
-      main.appendChild(el('div', 'art__by', v.illustrator || '—'));
+      const pr = PRICE.priceOf(v.id);
+      const by = [v.illustrator || null, pr ? PRICE.format(pr.amount, pr.currency) + ' · ' + pr.source : null]
+        .filter(Boolean).join(' · ');
+      main.appendChild(el('div', 'art__by', by || '—'));
       row.appendChild(main);
       row.appendChild(stepper(v));
       panel.appendChild(row);
@@ -947,6 +1085,93 @@ function group(panel, title, values, set, label) {
   }
   g.appendChild(row);
   panel.appendChild(g);
+}
+
+// ---------------------------------------------------------------- how to play
+const VIDEO_ID = '_-9QjVI7vcg';
+
+function openHowTo() {
+  openSheet(panel => {
+    panel.appendChild(el('h2', 'sheet__title', 'How to play'));
+    panel.appendChild(el('p', 'sheet__sub', 'hololive OFFICIAL CARD GAME'));
+
+    // video
+    panel.appendChild(el('h3', 'sheet__h', 'Watch'));
+    if (navigator.onLine === false) {
+      panel.appendChild(el('p', 'fgroup__note', 'The tutorial video needs a connection. It will appear here when you are back online.'));
+    } else {
+      const frame = el('div', 'video');
+      const iframe = document.createElement('iframe');
+      iframe.src = 'https://www.youtube-nocookie.com/embed/' + VIDEO_ID + '?rel=0';
+      iframe.title = 'How to play the hololive OFFICIAL CARD GAME';
+      iframe.loading = 'lazy';
+      iframe.allow = 'accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+      iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+      iframe.allowFullscreen = true;
+      frame.appendChild(iframe);
+      panel.appendChild(frame);
+    }
+
+    // rule book
+    panel.appendChild(el('h3', 'sheet__h', 'Read'));
+    panel.appendChild(linkRow('docs/official_rule_book_ver101.pdf',
+      'Official Rule Book', 'PDF · 36 pages · 4 MB'));
+    panel.appendChild(linkRow('https://en.hololive-official-cardgame.com/wp-content/themes/tcg_en/assets/img/rule/comprehensive_rules_ver150.pdf',
+      'Comprehensive Rules', 'Every edge case, straight from Cover'));
+    panel.appendChild(linkRow('https://en.hololive-official-cardgame.com/rules/',
+      'Rules & Q&A', 'Official site'));
+
+    // offline quick reference, straight from the rule book
+    panel.appendChild(el('h3', 'sheet__h', 'Quick reference'));
+
+    const setup = el('div', 'ability');
+    setup.appendChild(el('div', 'ability__name', 'Setting up'));
+    setup.appendChild(el('p', 'ability__txt',
+      '1 Oshi holomem face up, a 50-card deck and a 20-card cheer deck, both shuffled face down.\n' +
+      'Rock-paper-scissors decides who goes first. Draw 7.\n' +
+      'No Debut holomem in hand? You must redraw — and each redraw after the first draws one card fewer.'));
+    panel.appendChild(setup);
+
+    const phases = [
+      ['Reset', 'Stand your resting holomem. Move the collab holomem back and rest it. No center holomem? Move one back. Skipped on the first turn.'],
+      ['Draw', 'Draw one card. An empty deck here loses you the game.'],
+      ['Cheer', 'Reveal the top cheer card and attach it to a holomem. An empty cheer deck is fine — you just skip it.'],
+      ['Main', 'Any of these, any number of times, in any order: place a holomem, bloom, collab, use an Oshi skill, play a support card, baton pass.'],
+      ['Performance', 'Use the Arts of your center holomem and your collab holomem, in either order.'],
+      ['End', '"During this turn" effects expire. Fill an empty center position, then pass the turn.'],
+    ];
+    for (const [name, text] of phases) {
+      const box = el('div', 'ability');
+      box.appendChild(el('div', 'ability__name', name + ' phase'));
+      box.appendChild(el('p', 'ability__txt', text));
+      panel.appendChild(box);
+    }
+
+    const win = el('div', 'ability');
+    win.appendChild(el('div', 'ability__name', 'You win when'));
+    win.appendChild(el('p', 'ability__txt',
+      '• your opponent’s life reaches 0, or\n' +
+      '• they cannot draw in their draw phase, or\n' +
+      '• they have no holomem on stage besides their Oshi.'));
+    panel.appendChild(win);
+
+    panel.appendChild(el('p', 'fgroup__note',
+      'Deck rules are checked for you in the Decks tab: exactly 1 Oshi, exactly 50 main-deck cards, exactly 20 cheer, at most 4 copies of a card number unless the card says otherwise.'));
+  });
+}
+
+function linkRow(href, title, sub) {
+  const a = document.createElement('a');
+  a.className = 'linkrow';
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  const m = el('div', 'linkrow__main');
+  m.appendChild(el('div', 'art__name', title));
+  m.appendChild(el('div', 'art__by', sub));
+  a.appendChild(m);
+  a.appendChild(el('span', 'linkrow__go', '↗'));
+  return a;
 }
 
 // ---------------------------------------------------------------- update prompt

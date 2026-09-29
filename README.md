@@ -12,6 +12,8 @@ No build step, no backend, no accounts. Plain ES modules + IndexedDB + a service
 | Offline / installable | done |
 | Deck builder | done |
 | Camera scanning | done |
+| How to play (video + rule book) | done |
+| Collection value | done |
 | Collection export / backup | next |
 
 ## Running it
@@ -76,9 +78,11 @@ js/sets.js              set/product names, browse order
 js/scanhash.js          the image fingerprint — shared by the app and the indexer
 js/scan.js              camera, index loading, nearest-neighbour matching
 js/update.js            "a new version is live" detection
+js/prices.js            price data, currency conversion, collection value
 js/deck.js              deck model, legality rules, holoDelta import/export
 js/app.js               views, sheets, interaction
 icons/                  app icons — icon.svg is the source, the PNGs are generated
+docs/                   the official rule book PDF
 data/scan-index.bin     4,968 fingerprints, 1.2 MB
 data/scan-index.json    ids and metadata for the above
 tools/                  index builder and accuracy test (dev only, not shipped)
@@ -223,3 +227,60 @@ a newer build than the one you dismissed still prompts.
 
 Rebuilding the scan index alone does not trigger the prompt — `data/scan-index.*` is deliberately
 outside the watched set, since it is 1.2 MB. The Scan tab reports index staleness on its own.
+
+## How to play
+
+The **?** button in the header opens a sheet with:
+
+- the tutorial video, embedded from `youtube-nocookie.com` (needs a connection — the sheet says so
+  when offline)
+- the **Official Rule Book** PDF, served from `docs/`
+- links to the Comprehensive Rules and the official Rules & Q&A
+- a quick reference that works offline: setup, every phase in turn order, and the win conditions,
+  taken from the rule book itself rather than written from memory
+
+The PDF is Cover's own 36-page rule book, recompressed from 20 MB to 4.2 MB with Ghostscript
+(images downsampled to 150 dpi; the text layer is vector and untouched, so it stays sharp and
+searchable):
+
+```bash
+gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.7 -dNOPAUSE -dQUIET -dBATCH \
+   -dDetectDuplicateImages=true -dCompressFonts=true -dSubsetFonts=true \
+   -dDownsampleColorImages=true -dColorImageDownsampleType=/Bicubic -dColorImageResolution=150 \
+   -dDownsampleGrayImages=true -dGrayImageDownsampleType=/Bicubic -dGrayImageResolution=150 \
+   -dAutoFilterColorImages=false -dColorImageFilter=/DCTEncode -dJPEGQ=72 \
+   -sOutputFile=out.pdf in.pdf
+```
+
+It is not precached by the service worker — 4 MB is too much to hold for a file you open rarely,
+and it downloads on demand.
+
+## Collection value
+
+The Collection tab shows what the collection would cost to buy, with the five most valuable cards
+and a per-set subtotal on each set row. Card prices also appear on each print in the card sheet,
+and a deck's total appears in the deck editor.
+
+Prices come from **[hocg-fan-sim-prices](https://github.com/Qrimpuff/hocg-fan-sim-prices)** (MIT),
+the price companion to the card dataset — one JSON keyed by shop URL:
+
+```json
+"https://yuyu-tei.jp/sell/hocg/card/hbp01/10001": ["2026-09-21T…", {"y": 680}]
+"https://www.tcgplayer.com/product/635585":       ["2026-08-18T…", {"d": 711}]
+```
+
+`y` is whole yen, `d` is US cents. Cards link to those rows through `yuyutei_sell_paths` and
+`tcgplayer_product_ids` in the card dataset. Coverage: **96% of the 3,176 prints** have at least
+one price (56% have both, 35% Yuyu-tei only, 5% TCGplayer only).
+
+Settings live behind the chip in the value card's corner:
+
+- **Currency** — EUR, USD or JPY. Rates come from `open.er-api.com` (with `frankfurter.dev` as a
+  backup), cached for a day. With no rate available, prices stay in their own currency.
+- **Source** — Auto prefers TCGplayer and falls back to Yuyu-tei. Yuyu-tei covers more prints;
+  TCGplayer matches the English cards more closely. Where a card has several listings the lowest
+  is used.
+
+These are shop listing prices from one Japanese retailer and one US marketplace, and the UI says
+so: a guide to replacement cost, not an appraisal. The price file is cached for a day; the "as of"
+date shown is the newest timestamp in the data.

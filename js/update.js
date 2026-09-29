@@ -12,7 +12,7 @@
 const WATCHED = [
   'index.html', 'sw.js', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/data.js', 'js/db.js', 'js/deck.js',
-  'js/sets.js', 'js/scan.js', 'js/scanhash.js', 'js/update.js',
+  'js/sets.js', 'js/scan.js', 'js/scanhash.js', 'js/update.js', 'js/prices.js',
 ];
 
 const MIN_GAP_MS = 15 * 60 * 1000;   // don't re-check more often than this
