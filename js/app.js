@@ -871,7 +871,7 @@ function renderDeckList(root) {
     ui.deckId = d.id;
     render();
   });
-  const auto = el("button", "btn", "\u2728 Build");
+  const auto = el("button", "btn", "\ Build");
   auto.type = "button";
   auto.addEventListener("click", openAutoBuild);
   const imp = el("button", "btn", "Import");
@@ -972,7 +972,7 @@ function renderDeckEditor(root, d) {
       el(
         "div",
         "checks__row checks__row--warn",
-        "\u2728 Built from your collection:",
+        "\ Built from your collection:",
       ),
     );
     for (const n of d.auto.notes)
