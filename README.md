@@ -14,6 +14,7 @@ No build step, no backend, no accounts. Plain ES modules + IndexedDB + a service
 | Camera scanning | done |
 | How to play (video + rule book) | done |
 | Collection value | done |
+| Automatic deck building | done |
 | Collection export / backup | next |
 
 ## Running it
@@ -80,6 +81,7 @@ js/scan.js              camera, index loading, nearest-neighbour matching
 js/update.js            "a new version is live" detection
 js/prices.js            price data, currency conversion, collection value
 js/deck.js              deck model, legality rules, holoDelta import/export
+js/autodeck.js          automatic deck building from owned cards
 js/app.js               views, sheets, interaction
 icons/                  app icons — icon.svg is the source, the PNGs are generated
 docs/                   the official rule book PDF
@@ -284,3 +286,55 @@ Settings live behind the chip in the value card's corner:
 These are shop listing prices from one Japanese retailer and one US marketplace, and the UI says
 so: a guide to replacement cost, not an appraisal. The price file is cached for a day; the "as of"
 date shown is the newest timestamp in the data.
+
+## Automatic deck building
+
+**✨ Build** in the Decks tab. Three ways in: around a specific Oshi you own, around a colour, or
+Surprise me. The pool is **strictly cards you own** — nothing you would have to buy is ever added.
+
+### Why bloom lines drive the algorithm
+
+Comprehensive Rules 8.3.3: the card you bloom with must have the **same card name** as the
+holomem on stage, a 1st Bloom goes onto a Debut or 1st, a 2nd onto a 1st or 2nd. So a deck is not
+a pile of strong holomem — it is a set of *lines*, each a Debut plus the 1st and 2nd Bloom cards
+sharing that name. A 1st Bloom with no matching Debut in the deck is a dead card.
+
+`js/autodeck.js` therefore groups owned holomem by card name, scores each line (in the Oshi's
+colour, how deep it runs, how many copies you have), and fills from the best lines down. **A line
+only contributes its 1st Bloom once its Debut is in the deck, and its 2nd once the 1st is in.**
+
+### The rest of the build
+
+1. **Oshi** — given, picked from the chosen colour, or random. No Oshi owned → it says so and stops.
+2. **Holomem** — bloom lines in the Oshi's colour first, aiming at roughly 12 Debut / 10 1st /
+   7 2nd. If your collection is too thin in that colour it widens to off-colour lines and says so.
+   Spot holomem are free filler, since they cannot bloom and need no line.
+3. **Support** — draw and search effects first, then colour match, then whatever you have most of.
+4. **Anything left owned**, to close the gap to 50.
+5. **Cheer** — the colours your arts actually cost, weighted by how often each appears. Every
+   needed colour gets two copies before the proportional split, so a colour can never round down
+   to zero and leave an art you cannot pay for.
+
+A per-print ledger is shared by both piles, so a print is never put in a deck more times than you
+own it. Copy limits come from the card's own `max_amount` (1 / 4 / 20 / 50) and the restricted
+list is honoured.
+
+### When your collection is short
+
+The deck is still created, and the editor shows what the builder could not do:
+
+```
+✨ Built from your collection:
+· Added off-colour holomem — you do not own enough green bloom lines yet.
+· 11 main-deck cards short — you do not own enough yet.
+· 20 cheer cards short.
+```
+
+That is more useful than refusing to build, and the normal legality errors sit right underneath.
+
+### Verified
+
+With a two-starter-deck collection: **25 of 25** random builds legal at 50/20, zero cards used
+beyond what is owned, zero orphaned 1st/2nd Bloom cards, and every cheer colour the deck's arts
+require present. With a single starter deck at one copy each it builds 39/50 and reports the
+shortfall instead of inventing cards. With nothing owned it explains that a deck needs an Oshi.

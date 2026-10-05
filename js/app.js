@@ -3,6 +3,7 @@ import * as DK from './deck.js';
 import * as SCAN from './scan.js';
 import * as UPDATE from './update.js';
 import * as PRICE from './prices.js';
+import * as AUTO from './autodeck.js';
 import * as db from './db.js';
 
 const $ = s => document.querySelector(s);
@@ -602,10 +603,13 @@ function renderDeckList(root) {
     ui.deckId = d.id;
     render();
   });
+  const auto = el('button', 'btn', '\u2728 Build');
+  auto.type = 'button';
+  auto.addEventListener('click', openAutoBuild);
   const imp = el('button', 'btn', 'Import');
   imp.type = 'button';
   imp.addEventListener('click', openImport);
-  head.append(mk, imp);
+  head.append(mk, auto, imp);
   root.appendChild(head);
 
   if (!ui.decks.length) {
@@ -650,6 +654,13 @@ function renderDeckEditor(root, d) {
     bar.appendChild(c);
   }
   root.appendChild(bar);
+
+  if (d.auto && d.auto.notes && d.auto.notes.length) {
+    const box = el('div', 'checks');
+    box.appendChild(el('div', 'checks__row checks__row--warn', '\u2728 Built from your collection:'));
+    for (const n of d.auto.notes) box.appendChild(el('div', 'checks__row', '\u00b7 ' + n));
+    root.appendChild(box);
+  }
 
   if (PRICE.loaded()) {
     const dv = PRICE.deckValue(d);
@@ -845,6 +856,100 @@ function exportRow(title, hint, text, filename) {
   row.append(copy, dl);
   box.appendChild(row);
   return box;
+}
+
+function openAutoBuild() {
+  const oshis = AUTO.ownedOshi();
+  const colors = AUTO.ownedColors();
+
+  openSheet(panel => {
+    panel.appendChild(el('h2', 'sheet__title', 'Build a deck'));
+    panel.appendChild(el('p', 'sheet__sub', 'From cards you own'));
+
+    if (!oshis.length) {
+      panel.appendChild(el('p', 'fgroup__note',
+        'Every deck needs an Oshi holomem, and there is not one in your collection yet. ' +
+        'Scan a few cards or mark them owned, then come back.'));
+      return;
+    }
+
+    let seed = { kind: 'random' };
+    const runBtn = el('button', 'btn btn--primary', 'Build it');
+
+    const mark = (row, btn) => row.querySelectorAll('.chip').forEach(x => x.classList.toggle('is-on', x === btn));
+
+    // around an Oshi
+    const g1 = el('div', 'fgroup');
+    g1.appendChild(el('h3', 'fgroup__h', 'Around an Oshi'));
+    const r1 = el('div', 'fgroup__row');
+    for (const e of oshis) {
+      const b = el('button', 'chip', D.t(e.card.name));
+      b.type = 'button';
+      b.title = e.card.card_number;
+      b.addEventListener('click', () => {
+        seed = { kind: 'oshi', cardNumber: e.card.card_number };
+        mark(r1, b); mark(r2, null);
+        runBtn.textContent = 'Build ' + D.t(e.card.name);
+      });
+      r1.appendChild(b);
+    }
+    g1.appendChild(r1);
+    panel.appendChild(g1);
+
+    // around a colour
+    const g2 = el('div', 'fgroup');
+    g2.appendChild(el('h3', 'fgroup__h', 'Around a colour'));
+    const r2 = el('div', 'fgroup__row');
+    const oshiColors = new Set();
+    for (const e of oshis) for (const c of e.card.colors || []) oshiColors.add(c);
+    for (const { color, count } of colors) {
+      if (!oshiColors.has(color)) continue;     // no Oshi of that colour = no deck
+      const b = el('button', 'chip', cap(color));
+      b.type = 'button';
+      b.appendChild(el('span', 'chip__tag', String(count)));
+      b.addEventListener('click', () => {
+        seed = { kind: 'color', color };
+        mark(r2, b); mark(r1, null);
+        runBtn.textContent = 'Build ' + cap(color);
+      });
+      r2.appendChild(b);
+    }
+    g2.appendChild(r2);
+    if (!r2.children.length) g2.appendChild(el('p', 'fgroup__note', 'Colours appear here once you own an Oshi in them.'));
+    panel.appendChild(g2);
+
+    panel.appendChild(el('p', 'fgroup__note',
+      'Decks are built from bloom lines — a Debut plus the 1st and 2nd Bloom cards with the same name — ' +
+      'then support, then cheer matched to what your arts cost. Nothing you do not own is ever added; ' +
+      'if your collection cannot reach 50 and 20 the deck is still created and tells you what is short.'));
+
+    const foot = el('div', 'sheet__foot');
+    const dice = el('button', 'btn', '✨ Surprise me');
+    dice.type = 'button';
+    dice.addEventListener('click', () => runBuild({ kind: 'random' }));
+    runBtn.type = 'button';
+    runBtn.addEventListener('click', () => runBuild(seed));
+    foot.append(dice, runBtn);
+    panel.appendChild(foot);
+  });
+}
+
+async function runBuild(seed) {
+  let result;
+  try {
+    result = AUTO.build(seed);
+  } catch (err) {
+    return toast('Build failed: ' + err.message);
+  }
+  if (!result.deck) return toast(result.report.reason);
+
+  await DK.save(result.deck);
+  ui.decks.push(result.deck);
+  ui.deckId = result.deck.id;
+  closeSheet();
+  window.scrollTo(0, 0);
+  render();
+  toast(result.report.complete ? 'Built a legal deck' : 'Built what your collection allows');
 }
 
 function openImport() {
