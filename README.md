@@ -5,17 +5,17 @@ No build step, no backend, no accounts. Plain ES modules + IndexedDB + a service
 
 ## Status
 
-| Area | State |
-|---|---|
-| Card browser, search, filters | done |
-| Collection tracking (per print) | done |
-| Offline / installable | done |
-| Deck builder | done |
-| Camera scanning | done |
-| How to play (video + rule book) | done |
-| Collection value | done |
-| Automatic deck building | done |
-| Collection export / backup | next |
+| Area                            | State |
+| ------------------------------- | ----- |
+| Card browser, search, filters   | done  |
+| Collection tracking (per print) | done  |
+| Offline / installable           | done  |
+| Deck builder                    | done  |
+| Camera scanning                 | done  |
+| How to play (video + rule book) | done  |
+| Collection value                | done  |
+| Automatic deck building         | done  |
+| Collection export / backup      | next  |
 
 ## Running it
 
@@ -25,7 +25,7 @@ Any static server will do — it just needs HTTPS (or `localhost`) for the servi
 npx serve .          # or: python3 -m http.server 8000
 ```
 
-On the phone: open the URL in Chrome/Safari → *Add to home screen*.
+On the phone: open the URL in Chrome/Safari → _Add to home screen_.
 First launch downloads ~3.8 MB of card data once; after that it works offline.
 Card images are cached as you scroll past them.
 
@@ -43,11 +43,11 @@ Card data comes from **[hocg-fan-sim-assets](https://github.com/Qrimpuff/hocg-fa
 
 **Card images** in Filters & display picks between these:
 
-| Mode | Behaviour |
-|---|---|
+| Mode             | Behaviour                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------- |
 | `auto` (default) | official English scan where one exists, official Japanese otherwise — never a proxy |
-| `en` | English wherever possible, proxies included |
-| `jp` | always the Japanese scan |
+| `en`             | English wherever possible, proxies included                                         |
+| `jp`             | always the Japanese scan                                                            |
 
 Text language is a separate control (the EN/JP button in the header) and always uses the dataset's translations.
 
@@ -117,12 +117,16 @@ fanned cards in the wrong place. Render with a real browser engine:
 
 ```js
 // node render.mjs icons/icon.svg icons/icon-master-1024.png
-import { chromium } from 'playwright';
-import fs from 'node:fs';
-const svg = fs.readFileSync(process.argv[2], 'utf8');
+import { chromium } from "playwright";
+import fs from "node:fs";
+const svg = fs.readFileSync(process.argv[2], "utf8");
 const b = await chromium.launch();
-const pg = await (await b.newContext({ viewport: { width: 1024, height: 1024 } })).newPage();
-await pg.setContent(`<style>html,body{margin:0;background:transparent}svg{width:1024px;height:1024px;display:block}</style>${svg}`);
+const pg = await (
+  await b.newContext({ viewport: { width: 1024, height: 1024 } })
+).newPage();
+await pg.setContent(
+  `<style>html,body{margin:0;background:transparent}svg{width:1024px;height:1024px;display:block}</style>${svg}`,
+);
 await pg.screenshot({ path: process.argv[3], omitBackground: true });
 await b.close();
 ```
@@ -165,12 +169,12 @@ the picture to card shape; handy on a desktop, and the only option if the camera
 
 `js/scanhash.js` reduces any card image to a 256-byte fingerprint:
 
-| Bytes | Component | Why |
-|---|---|---|
-| 32 | 16×16 horizontal gradient | layout and art structure; differential, so exposure doesn't move it |
-| 32 | 16×16 vertical gradient | the other half of the structure |
-| 48 | 6×8 luma grid, contrast-stretched | coarse tone, tolerant of small framing errors |
-| 144 | 6×8 grid of grey-world-normalised RGB | the strongest signal; normalisation cancels white balance |
+| Bytes | Component                             | Why                                                                 |
+| ----- | ------------------------------------- | ------------------------------------------------------------------- |
+| 32    | 16×16 horizontal gradient             | layout and art structure; differential, so exposure doesn't move it |
+| 32    | 16×16 vertical gradient               | the other half of the structure                                     |
+| 48    | 6×8 luma grid, contrast-stretched     | coarse tone, tolerant of small framing errors                       |
+| 144   | 6×8 grid of grey-world-normalised RGB | the strongest signal; normalisation cancels white balance           |
 
 `tools/build-scan-index.mjs` fingerprints every official scan — Japanese, plus English where it
 exists, skipping proxies since nobody owns one — into `data/scan-index.*`. The indexer runs the
@@ -186,7 +190,7 @@ phone does — crop jitter, rotation, shear, exposure and white-balance shift, s
 downscale — and looks up each one:
 
 - **98.8%** right card
-- **74.8%** right card *and* right print
+- **74.8%** right card _and_ right print
 - **99.6%** in the top 5
 
 The gap between those first two numbers is the whole reason the result sheet is shaped the way it
@@ -289,14 +293,14 @@ date shown is the newest timestamp in the data.
 
 ## Automatic deck building
 
-**✨ Build** in the Decks tab. Three ways in: around a specific Oshi you own, around a colour, or
+** Build** in the Decks tab. Three ways in: around a specific Oshi you own, around a colour, or
 Surprise me. The pool is **strictly cards you own** — nothing you would have to buy is ever added.
 
 ### Why bloom lines drive the algorithm
 
 Comprehensive Rules 8.3.3: the card you bloom with must have the **same card name** as the
 holomem on stage, a 1st Bloom goes onto a Debut or 1st, a 2nd onto a 1st or 2nd. So a deck is not
-a pile of strong holomem — it is a set of *lines*, each a Debut plus the 1st and 2nd Bloom cards
+a pile of strong holomem — it is a set of _lines_, each a Debut plus the 1st and 2nd Bloom cards
 sharing that name. A 1st Bloom with no matching Debut in the deck is a dead card.
 
 `js/autodeck.js` therefore groups owned holomem by card name, scores each line (in the Oshi's
@@ -324,7 +328,7 @@ list is honoured.
 The deck is still created, and the editor shows what the builder could not do:
 
 ```
-✨ Built from your collection:
+ Built from your collection:
 · Added off-colour holomem — you do not own enough green bloom lines yet.
 · 11 main-deck cards short — you do not own enough yet.
 · 20 cheer cards short.
